@@ -1,49 +1,62 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:audio_session/audio_session.dart';
 
-// ── KOLORY (Video Lite style) ─────────────────────────────────────────────────
 const _bg = Color(0xFF0F0F0F);
 const _surface = Color(0xFF1A1A1A);
-const _card = Color(0xFF242424);
-const _accent = Color(0xFFFF0000); // czerwony YT
-const _textPrim = Color(0xFFFFFFFF);
+const _accent = Color(0xFFFF0000);
+const _textPri = Color(0xFFFFFFFF);
 const _textSec = Color(0xFF9E9E9E);
 const _divider = Color(0xFF2C2C2C);
+
+// ── AUDIO SESSION — musi być skonfigurowany PRZED WebView ────────────────────
+// Na iPhone przełącznik boczny (Ring/Silent) blokuje audio z WebView
+// jeśli kategoria to .ambient lub .soloAmbient.
+// Kategoria .playback ignoruje przełącznik — to samo co Spotify/YouTube.
+Future<void> _setupAudio() async {
+  final session = await AudioSession.instance;
+  await session.configure(const AudioSessionConfiguration(
+    // .playback = gra nawet gdy telefon wyciszony (jak Spotify)
+    avAudioSessionCategory: AVAudioSessionCategory.playback,
+    // Bez mixWithOthers — wyłącza inne audio gdy gramy (jak YouTube)
+    avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.none,
+    avAudioSessionMode: AVAudioSessionMode.defaultMode,
+    // longFormAudio = przeznaczony dla muzyki/wideo — priorytet w centrum sterowania
+    avAudioSessionRouteSharingPolicy:
+        AVAudioSessionRouteSharingPolicy.longFormAudio,
+    avAudioSessionSetActiveOptions: AVAudioSessionSetActiveOptions.none,
+    androidAudioAttributes: AndroidAudioAttributes(
+      contentType: AndroidAudioContentType.music,
+      flags: AndroidAudioFlags.none,
+      usage: AndroidAudioUsage.media,
+    ),
+    androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
+    androidWillPauseWhenDucked: false,
+  ));
+  // setActive(true) — mówi iOS że teraz MY gramy audio
+  await session.setActive(true);
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  SystemChrome.setSystemUIOverlayStyle(
-    const SystemUiOverlayStyle(
-      statusBarColor: Colors.transparent,
-      statusBarIconBrightness: Brightness.light,
-      systemNavigationBarColor: _bg,
-      systemNavigationBarIconBrightness: Brightness.light,
-    ),
-  );
-  await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+    statusBarColor: Colors.transparent,
+    statusBarIconBrightness: Brightness.light,
+    systemNavigationBarColor: _bg,
+    systemNavigationBarIconBrightness: Brightness.light,
+  ));
 
-  final session = await AudioSession.instance;
-  await session.configure(
-    const AudioSessionConfiguration(
-      avAudioSessionCategory: AVAudioSessionCategory.playback,
-      avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.none,
-      avAudioSessionMode: AVAudioSessionMode.defaultMode,
-      avAudioSessionRouteSharingPolicy:
-          AVAudioSessionRouteSharingPolicy.longFormAudio,
-      avAudioSessionSetActiveOptions: AVAudioSessionSetActiveOptions.none,
-      androidAudioAttributes: AndroidAudioAttributes(
-        contentType: AndroidAudioContentType.music,
-        flags: AndroidAudioFlags.none,
-        usage: AndroidAudioUsage.media,
-      ),
-      androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
-      androidWillPauseWhenDucked: false,
-    ),
-  );
-  await session.setActive(true);
+  if (defaultTargetPlatform == TargetPlatform.android) {
+    await InAppWebViewController.setWebContentsDebuggingEnabled(false);
+  }
+
+  // Audio PRZED runApp — WebView dziedziczy ustawienia sesji
+  try {
+    await _setupAudio();
+  } catch (_) {}
 
   runApp(const _App());
 }
@@ -57,22 +70,20 @@ class _App extends StatelessWidget {
       theme: ThemeData(
         brightness: Brightness.dark,
         scaffoldBackgroundColor: _bg,
-        colorScheme: const ColorScheme.dark(
-          primary: _accent,
-          surface: _surface,
-        ),
+        colorScheme:
+            const ColorScheme.dark(primary: _accent, surface: _surface),
         appBarTheme: const AppBarTheme(
           backgroundColor: _bg,
-          foregroundColor: _textPrim,
+          foregroundColor: _textPri,
           elevation: 0,
           scrolledUnderElevation: 0,
           titleTextStyle: TextStyle(
-            color: _textPrim,
+            color: _textPri,
             fontSize: 18,
             fontWeight: FontWeight.w600,
             letterSpacing: -0.3,
           ),
-          iconTheme: IconThemeData(color: _textPrim),
+          iconTheme: IconThemeData(color: _textPri),
         ),
         bottomNavigationBarTheme: const BottomNavigationBarThemeData(
           backgroundColor: _bg,
@@ -80,20 +91,16 @@ class _App extends StatelessWidget {
           unselectedItemColor: _textSec,
           type: BottomNavigationBarType.fixed,
           elevation: 0,
-          selectedLabelStyle: TextStyle(
-            fontSize: 11,
-            fontWeight: FontWeight.w500,
-          ),
+          selectedLabelStyle:
+              TextStyle(fontSize: 11, fontWeight: FontWeight.w500),
           unselectedLabelStyle: TextStyle(fontSize: 11),
         ),
-        dividerColor: _divider,
       ),
       home: const _Shell(),
     );
   }
 }
 
-// ── SHELL ─────────────────────────────────────────────────────────────────────
 class _Shell extends StatefulWidget {
   const _Shell();
   @override
@@ -103,7 +110,7 @@ class _Shell extends StatefulWidget {
 class _ShellState extends State<_Shell> with WidgetsBindingObserver {
   int _idx = 0;
   final _pageCtrl = PageController();
-  static final youtubeKey = GlobalKey<_YouTubeState>();
+  static final _ytKey = GlobalKey<_YouTubeState>();
 
   @override
   void initState() {
@@ -121,10 +128,12 @@ class _ShellState extends State<_Shell> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) async {
     if (state == AppLifecycleState.paused) {
-      youtubeKey.currentState?.onBackground();
+      _ytKey.currentState?.onBackground();
     } else if (state == AppLifecycleState.resumed) {
-      final s = await AudioSession.instance;
-      await s.setActive(true);
+      // Reaktywuj sesję audio gdy app wraca z tła
+      try {
+        await _setupAudio();
+      } catch (_) {}
     }
   }
 
@@ -142,7 +151,7 @@ class _ShellState extends State<_Shell> with WidgetsBindingObserver {
         physics: const NeverScrollableScrollPhysics(),
         children: [
           const _HomeScreen(),
-          _YouTube(key: youtubeKey),
+          _YouTube(key: _ytKey),
           const _GoogleScreen(),
         ],
       ),
@@ -150,26 +159,29 @@ class _ShellState extends State<_Shell> with WidgetsBindingObserver {
         decoration: const BoxDecoration(
           border: Border(top: BorderSide(color: _divider, width: 0.5)),
         ),
-        child: BottomNavigationBar(
-          currentIndex: _idx,
-          onTap: _onTap,
-          items: const [
-            BottomNavigationBarItem(
-              icon: Icon(Icons.home_outlined),
-              activeIcon: Icon(Icons.home),
-              label: 'Start',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.play_circle_outline),
-              activeIcon: Icon(Icons.play_circle),
-              label: 'YouTube',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.search_outlined),
-              activeIcon: Icon(Icons.search),
-              label: 'Google',
-            ),
-          ],
+        child: SafeArea(
+          top: false,
+          child: BottomNavigationBar(
+            currentIndex: _idx,
+            onTap: _onTap,
+            items: const [
+              BottomNavigationBarItem(
+                icon: Icon(Icons.home_outlined),
+                activeIcon: Icon(Icons.home),
+                label: 'Start',
+              ),
+              BottomNavigationBarItem(
+                icon: Icon(Icons.play_circle_outline),
+                activeIcon: Icon(Icons.play_circle),
+                label: 'YouTube',
+              ),
+              BottomNavigationBarItem(
+                icon: Icon(Icons.search_outlined),
+                activeIcon: Icon(Icons.search),
+                label: 'Google',
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -179,36 +191,31 @@ class _ShellState extends State<_Shell> with WidgetsBindingObserver {
 // ── HOME ──────────────────────────────────────────────────────────────────────
 class _HomeScreen extends StatelessWidget {
   const _HomeScreen();
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: _bg,
       appBar: AppBar(
-        title: Row(
-          children: [
-            Container(
-              width: 26,
-              height: 26,
-              decoration: BoxDecoration(
-                color: _accent,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: const Icon(
-                Icons.play_arrow,
-                color: Colors.white,
-                size: 18,
-              ),
-            ),
-            const SizedBox(width: 8),
-            const Text('YT Lite'),
-          ],
-        ),
+        title: Row(children: [
+          Container(
+            width: 26,
+            height: 26,
+            decoration: BoxDecoration(
+                color: _accent, borderRadius: BorderRadius.circular(6)),
+            child: const Icon(Icons.play_arrow, color: Colors.white, size: 18),
+          ),
+          const SizedBox(width: 8),
+          const Text('YT Lite'),
+        ]),
       ),
       body: ListView(
-        padding: const EdgeInsets.all(20),
+        padding: EdgeInsets.only(
+          left: 20,
+          right: 20,
+          top: 20,
+          bottom: MediaQuery.of(context).padding.bottom + 20,
+        ),
         children: [
-          // Hero card
           Container(
             padding: const EdgeInsets.all(24),
             decoration: BoxDecoration(
@@ -220,32 +227,24 @@ class _HomeScreen extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 4,
-                  ),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                   decoration: BoxDecoration(
-                    color: _accent.withOpacity(0.15),
+                    color: _accent.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(20),
                   ),
-                  child: const Text(
-                    'Aktywny',
-                    style: TextStyle(
-                      color: _accent,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
+                  child: const Text('Aktywny',
+                      style: TextStyle(
+                          color: _accent,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600)),
                 ),
                 const SizedBox(height: 16),
-                const Text(
-                  'Muzyka w tle',
-                  style: TextStyle(
-                    color: _textPrim,
-                    fontSize: 22,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
+                const Text('Muzyka w tle',
+                    style: TextStyle(
+                        color: _textPri,
+                        fontSize: 22,
+                        fontWeight: FontWeight.w700)),
                 const SizedBox(height: 6),
                 const Text(
                   'YouTube gra nawet gdy zamkniesz aplikację lub zgasisz ekran.',
@@ -255,57 +254,43 @@ class _HomeScreen extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 16),
-          // Feature tiles
-          Row(
-            children: [
-              _FeatureTile(
+          Row(children: [
+            _Tile(
                 icon: Icons.block,
                 color: const Color(0xFF4CAF50),
                 label: 'Bez reklam',
-                sub: 'Auto-skip',
-              ),
-              const SizedBox(width: 12),
-              _FeatureTile(
+                sub: 'Auto-skip'),
+            const SizedBox(width: 12),
+            _Tile(
                 icon: Icons.music_note,
                 color: const Color(0xFF2196F3),
                 label: 'Tło',
-                sub: 'Audio działa',
-              ),
-              const SizedBox(width: 12),
-              _FeatureTile(
+                sub: 'Audio działa'),
+            const SizedBox(width: 12),
+            _Tile(
                 icon: Icons.speed,
                 color: const Color(0xFFFF9800),
                 label: 'Szybki',
-                sub: '100ms skip',
-              ),
-            ],
-          ),
+                sub: 'Auto-skip'),
+          ]),
           const SizedBox(height: 24),
-          // Quick access button
           GestureDetector(
-            onTap: () {
-              final shell = context.findAncestorStateOfType<_ShellState>();
-              shell?._onTap(1);
-            },
+            onTap: () =>
+                context.findAncestorStateOfType<_ShellState>()?._onTap(1),
             child: Container(
               padding: const EdgeInsets.all(18),
               decoration: BoxDecoration(
-                color: _accent,
-                borderRadius: BorderRadius.circular(14),
-              ),
+                  color: _accent, borderRadius: BorderRadius.circular(14)),
               child: const Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Icon(Icons.play_arrow, color: Colors.white, size: 22),
                   SizedBox(width: 8),
-                  Text(
-                    'Otwórz YouTube',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
+                  Text('Otwórz YouTube',
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600)),
                 ],
               ),
             ),
@@ -316,18 +301,15 @@ class _HomeScreen extends StatelessWidget {
   }
 }
 
-class _FeatureTile extends StatelessWidget {
+class _Tile extends StatelessWidget {
   final IconData icon;
   final Color color;
-  final String label;
-  final String sub;
-  const _FeatureTile({
-    required this.icon,
-    required this.color,
-    required this.label,
-    required this.sub,
-  });
-
+  final String label, sub;
+  const _Tile(
+      {required this.icon,
+      required this.color,
+      required this.label,
+      required this.sub});
   @override
   Widget build(BuildContext context) {
     return Expanded(
@@ -345,20 +327,17 @@ class _FeatureTile extends StatelessWidget {
               width: 36,
               height: 36,
               decoration: BoxDecoration(
-                color: color.withOpacity(0.15),
+                color: color.withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Icon(icon, color: color, size: 20),
             ),
             const SizedBox(height: 10),
-            Text(
-              label,
-              style: const TextStyle(
-                color: _textPrim,
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
+            Text(label,
+                style: const TextStyle(
+                    color: _textPri,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600)),
             Text(sub, style: const TextStyle(color: _textSec, fontSize: 11)),
           ],
         ),
@@ -382,87 +361,189 @@ class _YouTubeState extends State<_YouTube> with AutomaticKeepAliveClientMixin {
   bool get wantKeepAlive => true;
 
   Future<void> onBackground() async {
-    await _ctrl?.evaluateJavascript(
-      source: r"""
-      (function() {
-        const v = document.querySelector('video');
-        if (v && v.paused && window.__ytUserPaused !== true) v.play().catch(()=>{});
-      })();
-    """,
-    );
+    try {
+      await _ctrl?.evaluateJavascript(source: '''
+        (function() {
+          var v = document.querySelector('video');
+          if (v && v.paused && !window.__userPaused) {
+            v.play().catch(function(){});
+          }
+        })();
+      ''');
+    } catch (_) {}
   }
 
-  static const _js = r"""
-  (function() {
-    if (window.__adBlockInstalled) return;
-    window.__adBlockInstalled = true;
-    window.__ytUserPaused = false;
-
-    Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
-    Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
-    const stopEv = e => e.stopImmediatePropagation();
-    for (const ev of ['visibilitychange','webkitvisibilitychange','blur','pagehide','freeze','mozvisibilitychange']) {
-      document.addEventListener(ev, stopEv, true);
-      window.addEventListener(ev, stopEv, true);
-    }
-
-    const style = document.createElement('style');
-    style.id = 'yt-ab';
-    style.textContent = `
-      ytm-promoted-video-renderer, ytm-ad-slot, ytm-companion-slot,
-      ytm-banner-promo-renderer, ytm-promoted-sparkles-web-renderer,
-      .ad-container, .ytp-ad-overlay-container, .ytp-ad-text-overlay,
-      .ytp-ad-player-overlay, .ytp-ad-image-overlay, .ytp-ad-module,
-      [layout*="AD_"], [data-ad-slot-id] {
-        display: none !important; visibility: hidden !important;
-        height: 0 !important; opacity: 0 !important;
-      }`;
-    document.head.appendChild(style);
-
-    document.addEventListener('click', e => {
-      const b = e.target?.closest('.ytp-play-button,.ytm-play-pause-button,[aria-label*="Pause"],[aria-label*="Play"],[aria-label*="Wstrzymaj"],[aria-label*="Odtwarzaj"]');
-      if (b) { const v = document.querySelector('video'); if (v) setTimeout(() => { window.__ytUserPaused = v.paused; }, 150); }
-    }, true);
-
-    setInterval(() => {
-      const v = document.querySelector('video');
-      const skip = document.querySelector('.ytp-ad-skip-button,.ytp-ad-skip-button-modern,.ytp-skip-ad-button,[class*="skip-button"]');
-      if (skip && skip.offsetParent !== null) { skip.click(); return; }
-      if (!v) return;
-      const ad = !!(document.querySelector('.ad-showing,.ad-interrupting,[class*="ad-showing"]'));
-      if (ad && isFinite(v.duration) && v.duration > 0) { v.currentTime = v.duration - 0.01; v.play().catch(()=>{}); return; }
-      if (!ad && v.paused && !window.__ytUserPaused && v.readyState >= 3 && v.duration > 0) {
-        if (!v.__bgR) { v.__bgR = true; v.play().catch(()=>{}); }
-      } else if (!v.paused) { v.__bgR = false; }
-    }, 100);
-
-    new MutationObserver(() => {
-      document.querySelectorAll('ytm-promoted-video-renderer,ytm-ad-slot,.ad-container,ytm-banner-promo-renderer')
-        .forEach(n => n.style.setProperty('display','none','important'));
-    }).observe(document.documentElement, { childList: true, subtree: true });
-
-    const _p = history.pushState.bind(history), _r = history.replaceState.bind(history);
-    function onNav() {
-      if (!document.getElementById('yt-ab')) document.head.appendChild(style);
-      window.__ytUserPaused = false;
-      let t = 0;
-      const q = setInterval(() => {
-        if (t++ > 30) { clearInterval(q); return; }
-        const sk = document.querySelector('.ytp-ad-skip-button,.ytp-ad-skip-button-modern,.ytp-skip-ad-button');
-        if (sk && sk.offsetParent !== null) { sk.click(); clearInterval(q); return; }
-        const v = document.querySelector('video');
-        const ad = !!(document.querySelector('.ad-showing,.ad-interrupting'));
-        if (ad && v && isFinite(v.duration) && v.duration > 0) { v.currentTime = v.duration - 0.01; v.play().catch(()=>{}); clearInterval(q); }
-      }, 100);
-    }
-    history.pushState = function(...a) { _p(...a); setTimeout(onNav, 50); };
-    history.replaceState = function(...a) { _r(...a); setTimeout(onNav, 50); };
-    window.addEventListener('popstate', () => setTimeout(onNav, 50));
-    document.addEventListener('yt-navigate-finish', () => { window.__ytUserPaused = false; onNav(); });
-  })();
+  // ── JS: visibility hack ───────────────────────────────────────────────────
+  static const _jsVisibility = r"""
+    (function() {
+      if (window.__visHack) return;
+      window.__visHack = true;
+      try {
+        Object.defineProperty(document, 'hidden',
+          { get: function(){ return false; }, configurable: true });
+        Object.defineProperty(document, 'visibilityState',
+          { get: function(){ return 'visible'; }, configurable: true });
+      } catch(e) {}
+      var fn = function(e){ e.stopImmediatePropagation(); };
+      ['visibilitychange','webkitvisibilitychange','blur',
+       'pagehide','freeze'].forEach(function(ev) {
+        document.addEventListener(ev, fn, true);
+        window.addEventListener(ev, fn, true);
+      });
+    })();
   """;
 
-  Future<void> _inject() async => _ctrl?.evaluateJavascript(source: _js);
+  // ── JS: ad block CSS ──────────────────────────────────────────────────────
+  static const _jsCss = r"""
+    (function() {
+      if (document.getElementById('__ytab')) return;
+      var s = document.createElement('style');
+      s.id = '__ytab';
+      s.textContent =
+        'ytm-promoted-video-renderer,ytm-ad-slot,ytm-companion-slot,' +
+        'ytm-banner-promo-renderer,ytm-promoted-sparkles-web-renderer,' +
+        '.ad-container,.ytp-ad-overlay-container,.ytp-ad-text-overlay,' +
+        '.ytp-ad-player-overlay,.ytp-ad-image-overlay,.ytp-ad-module,' +
+        '[data-ad-slot-id],[layout*="AD_"]' +
+        '{display:none!important;height:0!important;opacity:0!important;}';
+      document.head.appendChild(s);
+    })();
+  """;
+
+  // ── JS: główna logika — pauza + skip reklam + background ─────────────────
+  // Przepisane od zera z prostszą logiką:
+  // - __userPaused = true  gdy user kliknie pauzę
+  // - __userPaused = false gdy user kliknie play LUB wejdzie w nowy film
+  // - skip reklam działa niezależnie od __userPaused
+  // - background fix tylko sprawdza __userPaused raz na 2s
+  static const _jsLogic = r"""
+    (function() {
+      if (window.__ytLogic) return;
+      window.__ytLogic = true;
+      window.__userPaused = false;
+
+      // Podepnij zdarzenia na element video
+      function attach(v) {
+        if (!v || v.__att) return;
+        v.__att = true;
+        v.addEventListener('pause', function() {
+          var isAd = document.querySelector('.ad-showing,.ad-interrupting');
+          if (!isAd) window.__userPaused = true;
+        });
+        v.addEventListener('play', function() {
+          window.__userPaused = false;
+        });
+        v.addEventListener('ended', function() {
+          window.__userPaused = false;
+        });
+        v.addEventListener('loadstart', function() {
+          // Nowy film — zresetuj
+          window.__userPaused = false;
+          v.__att = false;
+        });
+      }
+
+      function getVideo() { return document.querySelector('video'); }
+      function isAdPlaying() {
+        return !!(document.querySelector('.ad-showing') ||
+                  document.querySelector('.ad-interrupting'));
+      }
+
+      // ── SKIP REKLAM: co 150ms ───────────────────────────────────────────
+      // Agresywny skip — nie czeka, nie patrzy na __userPaused
+      setInterval(function() {
+        try {
+          var v = getVideo();
+          if (v) attach(v);
+
+          // 1. Kliknij przycisk "Pomiń"
+          var btn = document.querySelector(
+            '.ytp-ad-skip-button,.ytp-ad-skip-button-modern,.ytp-skip-ad-button,.ytp-ad-skip-button-slot'
+          );
+          if (btn && btn.offsetParent !== null) {
+            btn.click();
+            return;
+          }
+
+          // 2. Przewiń reklamę do końca
+          if (!v) return;
+          if (isAdPlaying() && isFinite(v.duration) && v.duration > 0) {
+            v.currentTime = v.duration - 0.05;
+            return;
+          }
+        } catch(e) {}
+      }, 150);
+
+      // ── BACKGROUND FIX: co 2s ───────────────────────────────────────────
+      // Wznów audio w tle TYLKO gdy user nie spauzował
+      setInterval(function() {
+        try {
+          var v = getVideo();
+          if (!v) return;
+          if (v.paused && !window.__userPaused && !isAdPlaying() &&
+              v.readyState >= 3 && v.duration > 0) {
+            v.play().catch(function(){});
+          }
+        } catch(e) {}
+      }, 2000);
+
+      // ── MUTATION OBSERVER: blokuj reklamy w DOM ─────────────────────────
+      try {
+        new MutationObserver(function() {
+          try {
+            document.querySelectorAll(
+              'ytm-promoted-video-renderer,ytm-ad-slot,' +
+              '.ad-container,ytm-banner-promo-renderer'
+            ).forEach(function(n) {
+              n.style.display = 'none';
+            });
+            var v = getVideo();
+            if (v) attach(v);
+          } catch(e) {}
+        }).observe(document.documentElement, {childList:true, subtree:true});
+      } catch(e) {}
+
+      // ── SPA NAVIGATION ──────────────────────────────────────────────────
+      function onNav() {
+        window.__userPaused = false;
+        // Re-dodaj CSS jeśli zniknął
+        if (!document.getElementById('__ytab')) {
+          var s = document.createElement('style');
+          s.id = '__ytab';
+          s.textContent =
+            'ytm-promoted-video-renderer,ytm-ad-slot,[data-ad-slot-id]' +
+            '{display:none!important;}';
+          if (document.head) document.head.appendChild(s);
+        }
+      }
+
+      try {
+        var _pp = history.pushState.bind(history);
+        var _rr = history.replaceState.bind(history);
+        history.pushState = function() {
+          _pp.apply(history, arguments);
+          setTimeout(onNav, 80);
+        };
+        history.replaceState = function() {
+          _rr.apply(history, arguments);
+          setTimeout(onNav, 80);
+        };
+        window.addEventListener('popstate', function() { setTimeout(onNav, 80); });
+        document.addEventListener('yt-navigate-finish', function() {
+          window.__userPaused = false;
+        });
+      } catch(e) {}
+
+    })();
+  """;
+
+  Future<void> _inject() async {
+    try {
+      await _ctrl?.evaluateJavascript(source: _jsVisibility);
+      await _ctrl?.evaluateJavascript(source: _jsCss);
+      await _ctrl?.evaluateJavascript(source: _jsLogic);
+    } catch (_) {}
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -471,27 +552,18 @@ class _YouTubeState extends State<_YouTube> with AutomaticKeepAliveClientMixin {
       backgroundColor: _bg,
       appBar: AppBar(
         backgroundColor: _bg,
-        title: Row(
-          children: [
-            Container(
-              width: 26,
-              height: 26,
-              decoration: BoxDecoration(
-                color: _accent,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: const Icon(
-                Icons.play_arrow,
-                color: Colors.white,
-                size: 18,
-              ),
-            ),
-            const SizedBox(width: 8),
-            const Text('YouTube'),
-          ],
-        ),
+        title: Row(children: [
+          Container(
+            width: 26,
+            height: 26,
+            decoration: BoxDecoration(
+                color: _accent, borderRadius: BorderRadius.circular(6)),
+            child: const Icon(Icons.play_arrow, color: Colors.white, size: 18),
+          ),
+          const SizedBox(width: 8),
+          const Text('YouTube'),
+        ]),
         actions: [
-          // Przycisk wstecz
           if (_canGoBack)
             IconButton(
               icon: const Icon(Icons.arrow_back_ios_new, size: 18),
@@ -500,37 +572,50 @@ class _YouTubeState extends State<_YouTube> with AutomaticKeepAliveClientMixin {
           IconButton(
             icon: const Icon(Icons.refresh, size: 20),
             onPressed: () => _ctrl?.reload(),
-            tooltip: 'Odśwież',
           ),
           const SizedBox(width: 4),
         ],
       ),
       body: InAppWebView(
-        initialUrlRequest: URLRequest(url: WebUri("https://m.youtube.com")),
+        initialUrlRequest: URLRequest(url: WebUri('https://m.youtube.com')),
         initialSettings: InAppWebViewSettings(
+          // ── iOS audio — te 3 ustawienia są OBOWIĄZKOWE ──────────────────
+          // allowsInlineMediaPlayback: pozwala grać audio bez fullscreen
           allowsInlineMediaPlayback: true,
+          // mediaPlaybackRequiresUserGesture: false = gra automatycznie
           mediaPlaybackRequiresUserGesture: false,
+          // allowsPictureInPictureMediaPlayback: audio gdy ekran zgaszony
+          allowsPictureInPictureMediaPlayback: true,
+          // ────────────────────────────────────────────────────────────────
           domStorageEnabled: true,
           javaScriptEnabled: true,
-          allowsPictureInPictureMediaPlayback: true,
           cacheEnabled: true,
           clearCache: false,
-          userAgent:
-              "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) "
-              "AppleWebKit/605.1.15 (KHTML, like Gecko) "
-              "Version/17.5 Mobile/15E148 Safari/604.1",
+          disallowOverScroll: true,
+          transparentBackground: false,
+          isFraudulentWebsiteWarningEnabled: false,
+          userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) '
+              'AppleWebKit/605.1.15 (KHTML, like Gecko) '
+              'Version/17.5 Mobile/15E148 Safari/604.1',
           dataDetectorTypes: [DataDetectorTypes.NONE],
         ),
         onWebViewCreated: (c) => _ctrl = c,
         onLoadStop: (c, url) async {
           await _inject();
-          final canGoBack = await c.canGoBack();
-          if (mounted) setState(() => _canGoBack = canGoBack);
+          try {
+            final can = await c.canGoBack();
+            if (mounted) setState(() => _canGoBack = can);
+          } catch (_) {}
         },
-        onLoadError: (c, url, code, msg) => _inject(),
+        onReceivedError: (c, req, err) async {
+          if (err.type == WebResourceErrorType.CANCELLED) return;
+          await _inject();
+        },
         onUpdateVisitedHistory: (c, url, isReload) async {
-          final canGoBack = await c.canGoBack();
-          if (mounted) setState(() => _canGoBack = canGoBack);
+          try {
+            final can = await c.canGoBack();
+            if (mounted) setState(() => _canGoBack = can);
+          } catch (_) {}
         },
       ),
     );
@@ -574,16 +659,20 @@ class _GoogleState extends State<_GoogleScreen>
         ],
       ),
       body: InAppWebView(
-        initialUrlRequest: URLRequest(url: WebUri("https://www.google.com")),
+        initialUrlRequest: URLRequest(url: WebUri('https://www.google.com')),
         initialSettings: InAppWebViewSettings(
           domStorageEnabled: true,
           javaScriptEnabled: true,
           cacheEnabled: true,
+          disallowOverScroll: true,
+          transparentBackground: false,
         ),
         onWebViewCreated: (c) => _ctrl = c,
         onUpdateVisitedHistory: (c, url, isReload) async {
-          final canGoBack = await c.canGoBack();
-          if (mounted) setState(() => _canGoBack = canGoBack);
+          try {
+            final can = await c.canGoBack();
+            if (mounted) setState(() => _canGoBack = can);
+          } catch (_) {}
         },
       ),
     );
