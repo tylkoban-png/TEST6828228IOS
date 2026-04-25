@@ -41,6 +41,6 @@
 		<string>audio</string>
 	</array>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Wymagane do poprawnego działania sesji audio w tle.</string>
+	<string>Wymagane do sesji audio.</string>
 </dict>
 </plist>
