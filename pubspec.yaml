@@ -1,11 +1,11 @@
 name: yt_bloker_ios
-description: "A new Flutter project."
+description: "YT Lite - YouTube background player"
 publish_to: 'none'
 
 version: 1.0.0+1
 
 environment:
-  sdk: ^3.5.0
+  sdk: '>=3.0.0 <4.0.0'
 
 dependencies:
   flutter:
@@ -17,15 +17,7 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^5.0.0
-  # Dodajemy to tutaj, żeby system wiedział jak wygenerować ikony
-  flutter_launcher_icons: ^0.13.1
+  flutter_lints: ^6.0.0
 
 flutter:
   uses-material-design: true
-
-# Ta sekcja MUSI być przy samej lewej krawędzi (zero spacji przed nazwą)
-flutter_launcher_icons:
-  android: true
-  ios: true
-  image_path: "assets/icon.png"
